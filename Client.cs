@@ -9,6 +9,7 @@ namespace TechMain_2021_web_server {
 
         public Client(TcpClient client) {
             this.__client = client;
+            this.__stream = this.__client.GetStream();
         }
 
         public void Run() {
@@ -64,7 +65,7 @@ namespace TechMain_2021_web_server {
             }
 
             if (this.__url.EndsWith("/") && !this.__url.Contains('.')) {
-                this.__url = this.__url + "index.html";
+                this.__url += "index.html";
             }
 
             int i = this.__url.IndexOf("?");
@@ -94,12 +95,11 @@ namespace TechMain_2021_web_server {
 
             int count;
             byte[] buff = new byte[1024];
-            NetworkStream stream = this.__client.GetStream();
 
-            while ((count = stream.Read(buff, 0, buff.Length)) > 0) {
+            while ((count = this.__stream.Read(buff, 0, buff.Length)) > 0) {
                 request += Encoding.ASCII.GetString(buff, 0, count);
 
-                if (request.IndexOf("\r\n\r\n") >= 0) {
+                if (request.Contains("\r\n\r\n")) {
                     break;
                 }
             }
@@ -108,43 +108,31 @@ namespace TechMain_2021_web_server {
         }
 
         private void __SendHeaders(HttpStatusCode statusCode) {
-            string head = this.__GetProtocol() + " " + (int)statusCode + " " + statusCode.ToString() + "\r\n";
-            string server = "Server: superPuperServer\r\n";
-            string date = "Date: " + DateTime.Now.ToString() + "\r\n";
-            string connection = "Connection: keep-alive\r\n";
-
-            var header = head + server + date + connection;
+            string header = $"{this.__GetProtocol()} {(int)statusCode} {statusCode}\r\nServer: superPuperServer\r\nDate: {DateTime.Now.ToString()}\r\nConnection: keep-alive\r\n";
             if (statusCode == HttpStatusCode.OK) {
-                header = header + this.__GetContentInfo();
+                FileInfo file = new FileInfo(this.__filePath);
+
+                header += "Content-Type: " + this.__GetExtension(file.Extension) + "\r\n" + "Content-Length: " + file.Length + "\r\n";
             }
 
-            header = header + "\r\n";
+            header += "\r\n";
 
             byte[] buff = Encoding.ASCII.GetBytes(header);
-            NetworkStream stream = this.__client.GetStream();
-
-            stream.Write(buff, 0, buff.Length);
+            this.__stream.Write(buff, 0, buff.Length);
         }
 
         private void __SendFile() {
             FileStream file = new FileStream(this.__filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
-            NetworkStream stream = this.__client.GetStream();
 
             int count = 0;
             byte[] buff = new byte[1024];
 
             while (file.Position < file.Length) {
                 count = file.Read(buff, 0, buff.Length);
-                stream.Write(buff, 0, count);
+                this.__stream.Write(buff, 0, count);
             }
 
             file.Close();
-        }
-
-        private string __GetContentInfo() {
-            FileInfo file = new FileInfo(this.__filePath);
-
-            return "Content-Type: " + this.__GetExtension(file.Extension) + "\r\n" + "Content-Length: " + file.Length + "\r\n";
         }
 
         private string __GetMethod() {
@@ -190,6 +178,7 @@ namespace TechMain_2021_web_server {
         }
 
         private TcpClient __client;
+        private NetworkStream __stream;
         private string[] __request;
         private string __method;
         private string __url;

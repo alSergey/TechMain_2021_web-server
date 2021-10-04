@@ -43,7 +43,7 @@ namespace TechMain_2021_web_server {
             }
         }
 
-         private void __JoinThreads() {
+        private void __JoinThreads() {
             for (int i = 0; i != this.__threadCount; i++) {
                 this.__threadPool[i].Join();
             }
