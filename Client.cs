@@ -6,14 +6,17 @@ using System.Net.Sockets;
 
 namespace TechMain_2021_web_server {
     class Client {
-
         public Client(TcpClient client) {
             this.__client = client;
             this.__stream = this.__client.GetStream();
         }
 
         public void Run() {
-            this.__ParseRequest();
+            HttpStatusCode parseStatus = this.__ParseRequest();
+              if (parseStatus != HttpStatusCode.OK) {
+                this.__SendHeaders(parseStatus);
+                return;
+            }
 
             HttpStatusCode statusMethod = this.__ParseMethod();
             if (statusMethod != HttpStatusCode.OK) {
@@ -21,15 +24,9 @@ namespace TechMain_2021_web_server {
                 return;
             }
 
-            HttpStatusCode urlStatus = this.__ParseURL();
-            if (urlStatus != HttpStatusCode.OK) {
-                this.__SendHeaders(urlStatus);
-                return;
-            }
-
             HttpStatusCode fileStatus = this.__FindFile();
             if (fileStatus != HttpStatusCode.OK) {
-                 this.__SendHeaders(fileStatus);
+                this.__SendHeaders(fileStatus);
                 return;
             }
 
@@ -45,8 +42,14 @@ namespace TechMain_2021_web_server {
             this.__client.Close();
         }
 
-        private void __ParseRequest() {
-            this.__request = this.__GetRequest().Split("\r\n");
+        private HttpStatusCode __ParseRequest() {
+            string request = this.__GetRequest();
+            if (request == "") {
+                return HttpStatusCode.BadRequest;
+            }
+
+            this.__request = request.Split(" ");
+            return HttpStatusCode.OK;
         }
 
         private HttpStatusCode __ParseMethod() {
@@ -58,35 +61,42 @@ namespace TechMain_2021_web_server {
             return HttpStatusCode.OK;
         }
 
-        private HttpStatusCode __ParseURL() {
-            this.__url = this.__GetURL();
-            if (this.__url.Contains("../")) {
-                return HttpStatusCode.Forbidden;
+        private HttpStatusCode __FindFile() {
+            string url = this.__GetURL();
+
+            int i = url.IndexOf("?");
+            if (i >= 0) {
+                url = url.Substring(0, i);
             }
 
-            if (this.__url.EndsWith("/") && !this.__url.Contains('.')) {
-                this.__url += "index.html";
+            bool isIndexFile = false;
+            if (url.EndsWith("/") && !url.Contains('.')) {
+                isIndexFile = true;
+                url += "index.html";
             }
 
-            int i = this.__url.IndexOf("?");
-            if (i > 0) {
-                this.__url = this.__url.Substring(0, i);
-            }
-            
-            return HttpStatusCode.OK;
-        }
+            this.__filePath = "." + url;
 
-        public HttpStatusCode __FindFile() {
-            this.__filePath =  "." + __url;
-
+            // Если у пользователя недостаточно прав на этот файл, то функция вернет false и не будет кидать исключение
             if (!File.Exists(this.__filePath)) {
-                if (this.__filePath.Contains("index.html")) {
+                if (isIndexFile) {
                     return HttpStatusCode.Forbidden;
                 }
                 
                 return HttpStatusCode.NotFound;
             }
 
+            bool isAllowedDirectory = false;
+            try {
+                isAllowedDirectory = Path.GetFullPath(this.__filePath).StartsWith(Directory.GetCurrentDirectory());
+            } catch (Exception e) {
+                Console.WriteLine(e);
+                return HttpStatusCode.Forbidden;
+            }
+            if (!isAllowedDirectory) {
+                return HttpStatusCode.Forbidden;
+            }
+            
             return HttpStatusCode.OK;
         }
 
@@ -94,25 +104,30 @@ namespace TechMain_2021_web_server {
             string request = "";
 
             int count;
-            byte[] buff = new byte[1024];
+            byte[] buff = new byte[128];
 
             while ((count = this.__stream.Read(buff, 0, buff.Length)) > 0) {
                 request += Encoding.ASCII.GetString(buff, 0, count);
 
-                if (request.Contains("\r\n\r\n")) {
-                    break;
+                int i = request.IndexOf("\r\n");
+                if (i >= 0) {
+                    return request.Substring(0, i);
                 }
             }
-
-            return request;
+           
+           return "";
         }
 
         private void __SendHeaders(HttpStatusCode statusCode) {
             string header = $"{this.__GetProtocol()} {(int)statusCode} {statusCode}\r\nServer: superPuperServer\r\nDate: {DateTime.Now.ToString()}\r\nConnection: keep-alive\r\n";
-            if (statusCode == HttpStatusCode.OK) {
-                FileInfo file = new FileInfo(this.__filePath);
 
-                header += "Content-Type: " + this.__GetExtension(file.Extension) + "\r\n" + "Content-Length: " + file.Length + "\r\n";
+            if (statusCode == HttpStatusCode.OK) {
+                try {
+                    FileInfo file = new FileInfo(this.__filePath);
+                    header += "Content-Type: " + this.__GetExtension(file.Extension) + "\r\n" + "Content-Length: " + file.Length + "\r\n";
+                } catch (Exception e) {
+                    Console.WriteLine(e);
+                }
             }
 
             header += "\r\n";
@@ -122,33 +137,33 @@ namespace TechMain_2021_web_server {
         }
 
         private void __SendFile() {
-            FileStream file = new FileStream(this.__filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            try {
+                FileStream file = new FileStream(this.__filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
 
-            int count = 0;
-            byte[] buff = new byte[1024];
+                int count = 0;
+                byte[] buff = new byte[4096];
 
-            while (file.Position < file.Length) {
-                count = file.Read(buff, 0, buff.Length);
-                this.__stream.Write(buff, 0, count);
+                while (file.Position < file.Length) {
+                    count = file.Read(buff, 0, buff.Length);
+                    this.__stream.Write(buff, 0, count);
+                }
+
+                file.Close();
+            } catch (Exception e) {
+                Console.WriteLine(e);
             }
-
-            file.Close();
         }
 
         private string __GetMethod() {
-            string[] HEAD = this.__request[0].Split(" ");
-            return HEAD[0];
+            return this.__request != null ? this.__request[0] : "GET";
         }
 
         private string __GetURL() {
-            string[] HEAD = this.__request[0].Split(" ");
-            return Uri.UnescapeDataString(HEAD[1]);
+            return this.__request != null ? Uri.UnescapeDataString(this.__request[1]) : "/";
         }
 
         private string __GetProtocol() {
-            // string[] HEAD = this.__request[0].Split(" ");
-            // return HEAD[2];
-            return "HTTP/1.1";
+            return this.__request != null ? this.__request[2] : "HTTP/1.1";
         }
 
         private string __GetExtension(string extension) {
@@ -181,7 +196,6 @@ namespace TechMain_2021_web_server {
         private NetworkStream __stream;
         private string[] __request;
         private string __method;
-        private string __url;
         private string __filePath;
     }
 }
